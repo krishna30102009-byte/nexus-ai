@@ -1,5 +1,5 @@
 # NexusAI — staging/demo image (backend serves the static frontend)
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/

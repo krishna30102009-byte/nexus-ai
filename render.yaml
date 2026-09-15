@@ -7,6 +7,8 @@ services:
     buildCommand: npm ci
     startCommand: npx tsx backend/src/index.ts
     envVars:
+      - key: NODE_VERSION
+        value: 24.10.0
       - key: NODE_ENV
         value: production
       - key: DB_PATH
