@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "db:init": "tsx src/db/init.ts",
     "db:seed": "tsx src/db/seed.ts",
+    "db:seed:shirpur": "tsx src/db/seed-shirpur.ts",
     "db:reset": "npm run db:init && npm run db:seed",
     "test": "vitest run",
     "lint": "eslint src --ext .ts"

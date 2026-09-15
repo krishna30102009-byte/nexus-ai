@@ -160,8 +160,10 @@ router.post('/', requireOfficerOrAdmin, (req: AuthRequest, res) => {
 });
 
 // LIST — ?caseId=&q=&type=&page=&limit=
-router.get('/', requireAnyRole, (req, res) => {
+// q matches name, type, data_json AND identifiers (phone/CNR/FIR/criminal)
+router.get('/', requireAnyRole, (req: AuthRequest, res) => {
   const db = getDb();
+  const viewerRole = req.user!.role;
   const caseId = typeof req.query.caseId === 'string' ? req.query.caseId : undefined;
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const type = typeof req.query.type === 'string' ? req.query.type : undefined;
@@ -172,7 +174,17 @@ router.get('/', requireAnyRole, (req, res) => {
   if (type) rows = rows.filter((r) => r.type === type);
   if (q) {
     const lq = q.toLowerCase();
-    rows = rows.filter((r) => r.name.toLowerCase().includes(lq) || (r.data_json || '').toLowerCase().includes(lq));
+    let idMatchIds = new Set<string>();
+    try {
+      const hits = db.prepare(`SELECT entity_id, id_type, id_value FROM entity_identities WHERE id_value LIKE ?`).all(`%${q}%`) as Array<{ entity_id: string; id_type: string; id_value: string }>;
+      for (const h of hits) idMatchIds.add(h.entity_id);
+    } catch { /* ignore */ }
+    rows = rows.filter((r) =>
+      r.name.toLowerCase().includes(lq) ||
+      (r.type || '').toLowerCase().includes(lq) ||
+      (r.data_json || '').toLowerCase().includes(lq) ||
+      idMatchIds.has(r.id)
+    );
   }
   if (caseId) {
     const c = db.prepare(`SELECT entity_ids_json FROM cases WHERE id = ?`).get(caseId) as { entity_ids_json: string } | undefined;
@@ -181,7 +193,11 @@ router.get('/', requireAnyRole, (req, res) => {
     rows = rows.filter((r) => ids.includes(r.id));
   }
   const total = rows.length;
-  const page_rows = rows.slice((page - 1) * limit, page * limit).map(rowToEntity);
+  const page_rows = rows.slice((page - 1) * limit, page * limit).map((r) => ({
+    ...rowToEntity(r),
+    identifiers: getDisplayIdentities(r.id, viewerRole),
+    linkedCaseIds: findLinkedCaseIds(r.id),
+  }));
   res.json({ success: true, data: page_rows, meta: { timestamp: new Date().toISOString(), requestId: randomUUID(), version: '2.0', pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } } });
 });
 

@@ -20,6 +20,7 @@ import { auditLog } from './middleware/audit.js';
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db/connection.js';
 import { SCHEMA } from './db/schema.js';
+import { seedShirpur } from './db/seed-shirpur.js';
 import { hashPassword } from './utils/crypto.js';
 
 // Auto-init schema on boot (idempotent) so fresh deploys/Docker work
@@ -54,7 +55,15 @@ async function ensureSeedUsers(): Promise<void> {
     console.error('user seed failed:', e);
   }
 }
-void ensureSeedUsers();
+void ensureSeedUsers().then(() => {
+  // Content-only ensure: live DBs (e.g. Render disk) get the Shirpur case
+  // on redeploy without any manual step. Idempotent by FIR/identity.
+  try {
+    seedShirpur();
+  } catch (e) {
+    console.error('shirpur content ensure failed:', e);
+  }
+});
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);

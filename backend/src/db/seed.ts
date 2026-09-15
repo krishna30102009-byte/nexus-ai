@@ -6,6 +6,7 @@ import { explainRisk } from '../services/risk.js';
 import { resolveIdentities, attachIdentities } from '../services/identities.js';
 import { appendChainRecord } from '../services/chain.js';
 import { addTimelineEvent } from '../services/timeline.js';
+import { seedShirpur } from './seed-shirpur.js';
 
 async function main(): Promise<void> {
   const db = getDb();
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   }
 
   await seedDemoIntel();
+  seedShirpur();
   closeDb();
 }
 

@@ -42,6 +42,7 @@ Build modern HTML/CSS/JS crime-intelligence prototype: login + investigation das
 |T8|x|Approvals inbox UI + two-person decide; E2E verified (create→close→approve→reopen).|V2,V3|
 |T9|x|Live dossier: profile, identifiers, risk-why, cross-case chips, add-entity with dedupe→link.|V2,V3,V4|
 |T10|x|Boot animation + logo, ≤900px responsive, Dockerfile/render.yaml, boot schema auto-init.|V5|
+|T11|x|Shirpur content seed (NTF-044, FIR-SHP-2026-014, 25 entities, 31 rels) + boot ensure + entities LIST identifiers/ID-search; UI unchanged, case switch changes content.|V2,V3,V4|
 
 ## §B
 
