@@ -279,6 +279,7 @@
     const prof = d.profile || {};
     document.querySelector('#entity-connections').innerHTML = `<span class="chip">live record · ${(d.linkedCaseIds || []).length} case(s)</span>`;
     document.querySelector('#entity-phones').innerHTML = (d.identifiers || []).map(i => `<span class="chip">${esc(i.idType)}: ${esc(i.value)}${i.masked ? ' (masked)' : ''}</span>`).join('') || '<span class="muted">No identifiers.</span>';
+    (function () { const el = document.querySelector('#entity-ids'); if (!el) return; const by = {}; (d.identifiers || []).forEach(i => { by[i.idType] = i; }); const chip = (t, k) => `<span class="chip">${t}: ${by[k] ? esc(by[k].value) + (by[k].masked ? ' (masked)' : '') : '-'}</span>`; el.innerHTML = chip('FIR', 'fir') + chip('CNR', 'cnr') + chip('CR', 'criminal'); })();
     document.querySelector('#entity-note').textContent = prof.background || '—';
     panel.classList.add('open');
     renderLiveSection(d);

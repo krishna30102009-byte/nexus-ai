@@ -56,6 +56,7 @@
     document.querySelector('#entity-risk-label').textContent = entity.risk >= 80 ? 'Critical risk signal' : entity.risk >= 65 ? 'Elevated risk signal' : 'Monitored signal';
     document.querySelector('#entity-connections').innerHTML = entity.connections.map(x => `<span class="chip">${x}</span>`).join('');
     document.querySelector('#entity-phones').innerHTML = entity.phones.length ? entity.phones.map(x => `<span class="chip">${x}</span>`).join('') : '<span class="muted">No linked numbers in this demo case.</span>';
+    const __ids = document.querySelector('#entity-ids'); if (__ids) __ids.innerHTML = `<span class="chip">FIR: ${entity.firNumber || '-'}</span><span class="chip">CNR: ${entity.cnrNumber || '-'}</span><span class="chip">CR: ${entity.criminalId || '-'}</span>`;
     document.querySelector('#entity-note').textContent = entity.note; panel.classList.add('open');
     document.querySelectorAll('.graph-node').forEach(n=> n.style.outline='');
     const node=document.querySelector(`.graph-node[data-entity="${key}"]`);
