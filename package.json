@@ -1,0 +1,22 @@
+{
+  "name": "nexus-ai",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "shared"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=@nexus/backend",
+    "db:init": "npm run db:init --workspace=@nexus/backend",
+    "db:seed": "npm run db:seed --workspace=@nexus/backend",
+    "db:reset": "npm run db:reset --workspace=@nexus/backend"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true
+  }
+}

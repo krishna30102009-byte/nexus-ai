@@ -1,0 +1,23 @@
+# NexusAI staging — shareable demo URL (no local exposure needed)
+services:
+  - type: web
+    name: nexus-ai
+    runtime: node
+    plan: starter
+    buildCommand: npm ci
+    startCommand: npx tsx backend/src/index.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/nexus.db
+      - key: CORS_ORIGIN
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AADHAAR_ENC_KEY
+        generateValue: true
+    disk:
+      name: nexus-data
+      mountPath: /data
+      sizeGB: 1
