@@ -21,7 +21,7 @@
     });
     return;
   }
-  if (!sessionStorage.getItem('nexus-authorized')) window.location.href = 'index.html';
+  if (!sessionStorage.getItem('nexus-authorized')) window.location.href = '/';
   // LEVEL-2 live layer: JWT session verify + backend API helper (look unchanged)
   const __token = (() => { try { return localStorage.getItem('nexus-token'); } catch (e) { return null; } })();
   function __api(path, opts) {
@@ -32,7 +32,7 @@
   if (__token) {
     __api('/api/auth/me').then(({ ok, body }) => {
       const u = ok && body ? body.data || body : null;
-      if (!u || !u.email) { sessionStorage.removeItem('nexus-authorized'); try { localStorage.removeItem('nexus-token'); localStorage.removeItem('nexus-user'); } catch (e) { /* ignore */ } window.location.href = 'index.html'; return; }
+      if (!u || !u.email) { sessionStorage.removeItem('nexus-authorized'); try { localStorage.removeItem('nexus-token'); localStorage.removeItem('nexus-user'); } catch (e) { /* ignore */ } window.location.href = '/'; return; }
       try {
         const av = document.querySelector('.agent .avatar'); if (av && u.name) av.textContent = u.name.split(/[\s.]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
         const nm = document.querySelector('.agent strong'); if (nm && u.name) nm.textContent = u.name;
@@ -64,7 +64,7 @@
   document.querySelectorAll('[data-entity]').forEach(node => node.addEventListener('click', () => showEntity(node.dataset.entity)));
   document.querySelector('#close-panel').addEventListener('click', () => panel.classList.remove('open'));
   document.querySelector('#search').addEventListener('keydown', (event) => { if (event.key === 'Enter') { const q = event.target.value.toLowerCase(); const key = Object.keys(data.entities).find(k => data.entities[k].name.toLowerCase().includes(q)); if (key) showEntity(key); else { toast.textContent = 'No entity matched this demonstration dataset.'; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); } } });
-  document.querySelector('#logout').addEventListener('click', () => { sessionStorage.removeItem('nexus-authorized'); try { localStorage.removeItem('nexus-token'); localStorage.removeItem('nexus-user'); } catch (e) { /* ignore */ } window.location.href = 'index.html'; });
+  document.querySelector('#logout').addEventListener('click', () => { sessionStorage.removeItem('nexus-authorized'); try { localStorage.removeItem('nexus-token'); localStorage.removeItem('nexus-user'); localStorage.removeItem('nexus-case'); } catch (e) { /* ignore */ } window.location.href = '/'; });
 
   // ID-based search
   const idWrap = document.querySelector('#id-search');

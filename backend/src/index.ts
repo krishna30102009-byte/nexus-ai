@@ -82,6 +82,7 @@ app.use('/api/copilot', copilot);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, '..', '..');
 app.get('/', (_req, res) => res.sendFile(path.join(webRoot, 'index.html')));
+app.get('/index.html', (_req, res) => res.sendFile(path.join(webRoot, 'index.html')));
 app.get('/dashboard.html', (_req, res) => res.sendFile(path.join(webRoot, 'dashboard.html')));
 app.use('/assets', express.static(path.join(webRoot, 'assets')));
 
