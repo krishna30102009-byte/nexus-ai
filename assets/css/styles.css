@@ -235,3 +235,9 @@ body{min-width:0}
 .top-actions{max-width:100%}
 }
 @media(max-width:560px){.stats{grid-template-columns:1fr}.live-row{grid-template-columns:1fr}}
+/* ===== LIVE GRAPH (per-case map): stays in normal flow, never overlays ===== */
+#live-graph-body{position:relative;padding:6px 8px 14px;min-width:0}
+#live-graph-body svg{position:relative !important;inset:auto !important;width:100% !important;height:auto !important;display:block}
+#live-graph-bar{margin:12px 14px 0}
+#live-dossier-chips{max-height:132px;overflow:auto}
+#live-graph-body details ul.list{max-height:220px;overflow:auto}

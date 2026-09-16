@@ -43,10 +43,13 @@ Build modern HTML/CSS/JS crime-intelligence prototype: login + investigation das
 |T9|x|Live dossier: profile, identifiers, risk-why, cross-case chips, add-entity with dedupe→link.|V2,V3,V4|
 |T10|x|Boot animation + logo, ≤900px responsive, Dockerfile/render.yaml, boot schema auto-init.|V5|
 |T11|x|Shirpur content seed (NTF-044, FIR-SHP-2026-014, 25 entities, 31 rels) + boot ensure + entities LIST identifiers/ID-search; UI unchanged, case switch changes content.|V2,V3,V4|
+|T12|x|Strict per-case isolation: per-case bundle cache (entities/timeline/graph/detail) keyed by caseId; new case opens immediately with empty state + fresh entity flow; mock is offline-only fallback; single Active Investigation reflecting selected case; active id persisted + synced to copilot/verify/certificate.|V2,V3,V4|
 
 ## §B
 
 |id|date|cause|fix|
+|---|---|---|---|
+|B7|2026-09-16|New case showed Nightfall demo data and could not be trusted on open/switch: mock tables/graph/risk/activity/report rendered global `NexusData` unconditionally and overwrote live per-case views; `augmentReport` early-returned on existing `#live-case-head` so reports never updated; static network SVG stayed visible for every case; app.js `__caseId` closed over NTF-042 so copilot/verify/certificate used a stale case after switching; `setActiveCase` was unvalidated/unawaited with a racy double `refreshCases`.|live.js?v=3: CaseStore (caseMap + bundleCache keyed by caseId, liveReady gate), validated async `setActiveCase` (open-on-create + `startFreshEntityFlow`), per-case graph/risk/overview/stats/report renders with single-instance live heads and hidden static demo map when live; app.js?v=5: active id restored from `nexus-case` + `nexus:active-case` sync, mock renders gated/delegated when live, risk walk paused when live, ID search backend-first scoped to active case. Verified E2E on scratch DB copy: NTF-045 created→opened→empty→entity added with zero leak into NTF-042 (6 entities, 9-edge graph, 11-event timeline, chain verify 13/13 intact).|
 |---|---|---|---|
 |B1|2026-09-15|Closed side-drawer peeked ~212px on wide screens (`left:246px` + `translateX(-110%)` = spans -128..212px), covering sidebar nav tabs with cut-off content|Closed transform → `translateX(calc(-100% - 260px))` + `visibility:hidden` (delayed on close); removed duplicate `.side-drawer.open` rule|
 |B2|2026-09-15|risk-strip + scrubber nested inside network card made left column ~590px tall, alerts card stretched with empty gap|Moved both to full-width grid rows (`grid-column:1/-1`); `.grid{align-items:start}`|

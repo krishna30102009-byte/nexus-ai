@@ -20,6 +20,7 @@ import { auditLog } from './middleware/audit.js';
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db/connection.js';
 import { SCHEMA } from './db/schema.js';
+import { seedDemoIntel } from './db/seed.js';
 import { seedShirpur } from './db/seed-shirpur.js';
 import { hashPassword } from './utils/crypto.js';
 
@@ -55,9 +56,15 @@ async function ensureSeedUsers(): Promise<void> {
     console.error('user seed failed:', e);
   }
 }
-void ensureSeedUsers().then(() => {
-  // Content-only ensure: live DBs (e.g. Render disk) get the Shirpur case
-  // on redeploy without any manual step. Idempotent by FIR/identity.
+void ensureSeedUsers().then(async () => {
+  // Content-only ensure: live DBs (e.g. Render disk) get the Nightfall demo
+  // intel + the Shirpur case on redeploy without any manual step.
+  // Both are idempotent (skip existing cases/entities/relationships).
+  try {
+    await seedDemoIntel();
+  } catch (e) {
+    console.error('nightfall content ensure failed:', e);
+  }
   try {
     seedShirpur();
   } catch (e) {

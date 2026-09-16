@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getDb, closeDb } from './connection.js';
 import { hashPassword } from '../utils/crypto.js';
 import { explainRisk } from '../services/risk.js';
-import { resolveIdentities, attachIdentities } from '../services/identities.js';
+import { resolveIdentities, attachIdentities, findDuplicate } from '../services/identities.js';
 import { appendChainRecord } from '../services/chain.js';
 import { addTimelineEvent } from '../services/timeline.js';
 import { seedShirpur } from './seed-shirpur.js';
@@ -56,13 +56,30 @@ async function main(): Promise<void> {
 
 // Demo intelligence: 6 entities + relationships + 2nd cold case sharing
 // Riya (cross-case demo) + chain records so verify/copilot/certificate work.
-async function seedDemoIntel(): Promise<void> {
+// Exported so server boot can ensure it on fresh disks (idempotent).
+export async function seedDemoIntel(): Promise<void> {
   const db = getDb();
   const now = new Date().toISOString();
   const officer = db.prepare(`SELECT id FROM users WHERE email = 'officer@nexus.ai'`).get() as { id: string } | undefined;
   const admin = db.prepare(`SELECT id FROM users WHERE email = 'admin@nexus.ai'`).get() as { id: string } | undefined;
-  const ntf42 = db.prepare(`SELECT id FROM cases WHERE case_number = 'NTF-042'`).get() as { id: string } | undefined;
-  if (!officer || !admin || !ntf42) { console.log('demo intel skipped (users/case missing)'); return; }
+  if (!officer || !admin) { console.log('demo intel skipped (users missing)'); return; }
+
+  // Self-sufficient: create NTF-042 when missing (fresh disks only get users
+  // from boot ensure, so the case row must be created here too).
+  let ntf42 = db.prepare(`SELECT id FROM cases WHERE case_number = 'NTF-042'`).get() as { id: string } | undefined;
+  if (!ntf42) {
+    const caseId = randomUUID();
+    db.prepare(
+      `INSERT INTO cases (id, case_number, fir_number, cnr_number, title, description, status, priority, entity_ids_json, document_ids_json, created_at, updated_at, tags_json, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', 'high', '[]', '[]', ?, ?, ?, ?)`
+    ).run(
+      caseId, 'NTF-042', 'FIR-MH-2026-0147', 'CNR-MH-0192847',
+      'Operation Nightfall', 'Harbor warehouse network — ported from NexusAI prototype mock data.',
+      now, now, JSON.stringify(['harbor', 'financial']), admin.id
+    );
+    console.log('seeded case NTF-042', caseId);
+    ntf42 = { id: caseId };
+  }
 
   const demo = [
     { name: 'Arjun Mehra', type: 'person', ids: { phone: '9818018827', cnr: 'CNR-MH-0192847', aadhaar: '123456789012', fir: 'FIR-MH-2026-0147', criminal: 'CR-MH-2026-0001' }, bg: 'Primary subject. Centrality analysis places him at the intersection of communications, financial movement and location activity.', loc: 'Harbor Warehouse area, Mumbai', call: '42 calls with Riya Shah, night window 02:00-04:00', vehicles: ['DL-8C-4427'], risk: { centrality: 0.94, repeatPatterns: 4, linkedCases: 1, financialFlags: 1, recentActivityDays: 0 } },
@@ -77,6 +94,9 @@ async function seedDemoIntel(): Promise<void> {
   for (const e of demo) {
     const existing = db.prepare(`SELECT id FROM entities WHERE name = ?`).get(e.name) as { id: string } | undefined;
     if (existing) { ids[e.name] = existing.id; console.log('entity exists', e.name); continue; }
+    // Person-unique dedupe (phone/CNR/Aadhaar/criminal): reuse, never fork.
+    const dupPre = findDuplicate(resolveIdentities(e.ids as any));
+    if (dupPre) { ids[e.name] = dupPre.entityId; console.log('entity reuses', e.name, 'via', dupPre.idType); continue; }
     const risk = explainRisk(e.risk as any);
     const level = risk.score >= 85 ? 'critical' : risk.score >= 75 ? 'high' : risk.score >= 45 ? 'medium' : 'low';
     const id = randomUUID();
@@ -138,7 +158,12 @@ async function seedDemoIntel(): Promise<void> {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Only auto-run when invoked directly (`npm run db:seed`).
+// Importing this module (e.g. server boot ensure) must NOT seed by itself.
+const invokedAsSeed = (process.argv[1] || '').replace(/\\/g, '/');
+if (invokedAsSeed.endsWith('/seed.ts')) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

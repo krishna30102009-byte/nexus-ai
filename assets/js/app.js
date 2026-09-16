@@ -29,6 +29,14 @@
     return fetch(path, init).then((r) => r.json().then((b) => ({ ok: r.ok, status: r.status, body: b })).catch(() => ({ ok: r.ok, status: r.status, body: null })));
   }
   let __caseId = null;
+  try { __caseId = localStorage.getItem('nexus-case') || null; } catch (e) { /* ignore */ }
+  function __liveActive() { try { return !!(window.__nexusLive2 && window.__nexusLive2.isLiveActive && window.__nexusLive2.isLiveActive()); } catch (e) { return false; } }
+  try {
+    window.addEventListener('nexus:active-case', (ev) => {
+      const id = ev && ev.detail && ev.detail.caseId;
+      if (id) __caseId = id;
+    });
+  } catch (e) { /* ignore */ }
   if (__token) {
     __api('/api/auth/me').then(({ ok, body }) => {
       const u = ok && body ? body.data || body : null;
@@ -42,6 +50,7 @@
     }).catch(() => { /* offline: keep static demo running */ });
     __api('/api/cases?limit=10').then(({ ok, body }) => {
       const items = ok && body ? body.data || [] : [];
+      if (__caseId && items.some((c) => c.id === __caseId)) return; // keep restored active case
       const f = items.find((c) => c.case_number === 'NTF-042') || items[0];
       if (f) __caseId = f.id;
     }).catch(() => { /* offline */ });
@@ -49,6 +58,22 @@
   window.__nexusLive = { api: __api, token: __token, caseId: () => __caseId };
   const panel = document.querySelector('#detail-panel'); const toast = document.querySelector('#toast');
   function showEntity(key) {
+    // Live backend owns dossiers whenever a case is active — the static
+    // Nightfall mock must never bleed into another case.
+    if (__liveActive()) {
+      const live = window.__nexusLive2;
+      const nm = (data.entities[key] && data.entities[key].name) || String(key);
+      if (live && live.getActiveCaseId) {
+        const cid = live.getActiveCaseId();
+        __api(`/api/entities?caseId=${cid}&limit=100&q=${encodeURIComponent(nm)}`, {}).then(({ ok, body }) => {
+          const rows = ok && body ? body.data || [] : [];
+          const hit = rows.find(r => (r.name || '').toLowerCase() === String(nm).toLowerCase()) || rows[0];
+          if (hit && live.openLiveDossier) live.openLiveDossier(hit.id);
+          else { toast.textContent = 'Not part of the active case — switch cases to inspect it.'; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
+        }).catch(() => {});
+        return;
+      }
+    }
     const entity = data.entities[key]; if (!entity) return;
     document.querySelector('#entity-name').textContent = entity.name;
     document.querySelector('#entity-role').textContent = entity.role;
@@ -64,7 +89,22 @@
   }
   document.querySelectorAll('[data-entity]').forEach(node => node.addEventListener('click', () => showEntity(node.dataset.entity)));
   document.querySelector('#close-panel').addEventListener('click', () => panel.classList.remove('open'));
-  document.querySelector('#search').addEventListener('keydown', (event) => { if (event.key === 'Enter') { const q = event.target.value.toLowerCase(); const key = Object.keys(data.entities).find(k => data.entities[k].name.toLowerCase().includes(q)); if (key) showEntity(key); else { toast.textContent = 'No entity matched this demonstration dataset.'; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); } } });
+  document.querySelector('#search').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const raw = event.target.value.trim(); if (!raw) return;
+    // Scoped to the active case — never surface another case's records.
+    if (__liveActive() && window.__nexusLive2 && window.__nexusLive2.getActiveCaseId) {
+      const cid = window.__nexusLive2.getActiveCaseId();
+      __api(`/api/entities?caseId=${cid}&limit=20&q=${encodeURIComponent(raw)}`, {}).then(({ ok, body }) => {
+        const rows = ok && body ? body.data || [] : [];
+        if (!rows.length) { toast.textContent = 'No match in the active case.'; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); return; }
+        try { window.__nexusLive2.openLiveDossier(rows[0].id); } catch (e) { /* ignore */ }
+        if (rows.length > 1) { toast.textContent = `${rows.length} matches — opened top hit (${rows[0].name}).`; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
+      }).catch(() => {});
+      return;
+    }
+    const q = raw.toLowerCase(); const key = Object.keys(data.entities).find(k => data.entities[k].name.toLowerCase().includes(q)); if (key) showEntity(key); else { toast.textContent = 'No entity matched this demonstration dataset.'; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
+  });
   document.querySelector('#logout').addEventListener('click', () => { sessionStorage.removeItem('nexus-authorized'); try { localStorage.removeItem('nexus-token'); localStorage.removeItem('nexus-user'); localStorage.removeItem('nexus-case'); } catch (e) { /* ignore */ } window.location.href = '/'; });
 
   // ID-based search
@@ -98,6 +138,20 @@
       const raw = input.value.trim();
       if (!raw) { input.classList.add('invalid'); showToast(`Please ${placeholders[currentType].toLowerCase()}.`); hideResults(); return; }
       input.classList.remove('invalid');
+      // Live backend first (scoped to the active case) — never show another case's demo record.
+      if (__liveActive()) {
+        const liveId = (__caseId) || (window.__nexusLive2 && window.__nexusLive2.getActiveCaseId && window.__nexusLive2.getActiveCaseId());
+        const q = encodeURIComponent(raw);
+        __api(`/api/entities?caseId=${liveId}&limit=100&q=${q}`, {}).then(({ ok, body }) => {
+          const rows = ok && body ? body.data || [] : [];
+          if (!rows.length) { hideResults(); showToast('No criminal record found for this ID in the active case.'); return; }
+          if (rows.length === 1) { hideResults(); try { window.__nexusLive2.openLiveDossier(rows[0].id); } catch (e) { showToast(rows[0].name); } return; }
+          results.hidden = false;
+          results.innerHTML = `<div class="id-results-head"><strong>${rows.length} records found</strong><small>${placeholders[currentType]} · active case</small></div><div class="id-results-list">${rows.map((r) => `<button type="button" class="id-result" data-id="${r.id}"><span><b>${r.name}</b><span>${r.type}</span></span><span class="go">VIEW →</span></button>`).join('')}</div>`;
+          results.querySelectorAll('.id-result').forEach(b => b.addEventListener('click', () => { hideResults(); try { window.__nexusLive2.openLiveDossier(b.dataset.id); } catch (e) { /* ignore */ } }));
+        }).catch(() => { hideResults(); showToast('Search unavailable — backend unreachable.'); });
+        return;
+      }
       const field = fieldMap[currentType];
       const q = raw.toLowerCase();
       const matches = Object.entries(data.entities).filter(([, e]) => (e[field] || '').toLowerCase() === q);
@@ -219,7 +273,7 @@
   function handleQuery(q){
     addMsg('user', `<b>You</b><p>${escHtml(q)}</p>`);
     const t=addTyping();
-    const local=()=>{ t.remove(); copilotAnswer(q); };
+    const local=()=>{ t.remove(); if (__token && __liveActive()) { addMsg('ai', `<b>Nexus Copilot</b><p>Live backend unreachable for this case — mock answers stay disabled here so no other case can leak in. Retry in a moment.</p>`); return; } copilotAnswer(q); };
     if (!__token) { setTimeout(local, 650); return; }
     const payload = __caseId ? { question: q, caseId: __caseId } : { question: q };
     __api('/api/copilot/ask', { method: 'POST', body: JSON.stringify(payload) }).then(({ ok, body }) => {
@@ -284,8 +338,23 @@
     const body=document.querySelector('#network-body');
     const overlay=document.querySelector('#sim-overlay');
     if(!body||!overlay) return;
+    // Live mode hides the static demo map (with its overlay) — show the
+    // per-case estimate from the dossier instead of a dead overlay.
+    try {
+      if (overlay.offsetParent === null) {
+        const dt = document.querySelector('#sim-detail-text');
+        if (dt && dt.textContent) { toast.textContent = dt.textContent; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 3200); }
+        const detailSimLive = document.querySelector('#sim-detail');
+        if (detailSimLive) detailSimLive.hidden = false;
+      }
+    } catch (e) { /* ignore */ }
     body.classList.add('sim-active');
     overlay.hidden=false;
+    try {
+      const nm = window.__nexusSimName || document.querySelector('#entity-name')?.textContent || '';
+      const ot = document.querySelector('#sim-overlay-title');
+      if (ot && nm && nm !== 'Select an entity') ot.textContent = `Detention Simulation: ${nm} removed`;
+    } catch (e) { /* cosmetic */ }
     const detailSim=document.querySelector('#sim-detail');
     if(detailSim) detailSim.hidden=false;
   }
@@ -305,6 +374,7 @@
   document.querySelectorAll('.drawer-close').forEach(b=> b.addEventListener('click', closeDrawers));
   document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeDrawers(); const rm=document.querySelector('#report-modal'); if(rm) rm.hidden=true; }});
   function renderEntityList(filter){
+    if (__liveActive()) return; // live per-case layer owns entity views when backend is active
     const box=document.querySelector('#entity-list'); if(!box) return;
     const q=(filter||'').toLowerCase();
     const entries=Object.entries(data.entities).filter(([k,e])=> !q || e.name.toLowerCase().includes(q));
@@ -313,6 +383,7 @@
     box.querySelectorAll('.entity-row').forEach(b=> b.addEventListener('click', ()=>{ closeDrawers(); showEntity(b.dataset.key); }));
   }
   function renderSuspectActivity(){
+    if (__liveActive()) return; // live per-case layer owns activity views when backend is active
     const box=document.querySelector('#suspect-activity-list'); if(!box) return;
     const acts=data.suspectActivities||[];
     box.innerHTML=acts.map(a=>`<div class="sact"><div style="display:flex;gap:8px;align-items:center"><span class="activity-icon" style="width:24px;height:24px;border-radius:7px;background:rgba(73,133,255,.15);color:var(--blue);display:grid;place-items:center">${a.icon||'!'}</span><strong style="font-size:12px">Suspect activity</strong><time style="margin-left:auto">${a.t}</time></div><p style="margin:8px 0 6px;line-height:1.5">${a.text}</p><button class="chip chip-action" data-jump="${a.entity||'arjun'}" style="font-size:11px">Open dossier</button></div>`).join('');
@@ -320,6 +391,7 @@
     const filt=document.querySelector('#entity-filter'); if(filt) filt.addEventListener('input', ()=> renderEntityList(filt.value));
   }
   function renderReport(){
+    if (__liveActive()) return; // live per-case report owns this when backend is active
     const body=document.querySelector('#report-body'); if(!body) return;
     const ents=Object.entries(data.entities).map(([k,e])=>({k,name:e.name,role:e.role,risk:riskOf(e),criminalId:e.criminalId||'-',fir:e.firNumber||'-',cnr:e.cnrNumber||'-'})).sort((a,b)=>b.risk-a.risk);
     const avg=Math.round(ents.reduce((s,e)=>s+e.risk,0)/Math.max(1,ents.length));
@@ -346,9 +418,10 @@
   const rp=document.querySelector('#report-print'); if(rp) rp.addEventListener('click', ()=> window.print());
   const rcp=document.querySelector('#report-copy'); if(rcp) rcp.addEventListener('click', ()=>{ const t=document.querySelector('#report-body')?.innerText||''; try{ navigator.clipboard.writeText(t); toast.textContent='Report summary copied.'; }catch(_){ toast.textContent='Copy not available.'; } toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'),2000); });
   renderEntityList(''); renderSuspectActivity();
-  // varying risk signal below graph
+  // varying risk signal below graph (demo only — live per-case layer owns it when backend is active)
   let curRisk=78, dir=1;
   setInterval(()=>{
+    if (__liveActive()) return;
     curRisk+= (Math.random()*4-2) + dir*0.6;
     if(curRisk>89){curRisk=89;dir=-1;} if(curRisk<71){curRisk=71;dir=1;}
     const v=Math.round(curRisk);
@@ -367,6 +440,7 @@
   function riskNum(e){ const r=parseInt(e.risk||'0',10); return isNaN(r)?0:r; }
   function probCls(r){ return r>=80?'high':(r>=65?'med':'low'); }
   function renderEntitiesTable(){
+    if (__liveActive()) { try { window.__nexusLive2.renderLiveEntities(); } catch (e) { /* live will paint */ } return; }
     const tb=document.querySelector('#entities-tbody'); if(!tb) return;
     const ents=Object.entries(data.entities).map(([k,e])=>({k,name:e.name,type:e.type||'-',role:e.role||'-',risk:riskNum(e),cr:e.criminalId||'-',fir:e.firNumber||'-',cnr:e.cnrNumber||'-'})).sort((a,b)=>b.risk-a.risk);
     const tag=document.querySelector('#entities-count-tag'); if(tag) tag.textContent=ents.length+' SHOWN';
@@ -375,12 +449,14 @@
     tb.querySelectorAll('[data-open]').forEach(b=> b.addEventListener('click', ()=> showEntity(b.dataset.open)));
   }
   function renderActivityTimeline(){
+    if (__liveActive()) { try { window.__nexusLive2.renderLiveActivity(); } catch (e) { /* live will paint */ } return; }
     const box=document.querySelector('#activity-timeline'); if(!box) return;
     const acts=data.suspectActivities||[];
     box.innerHTML=acts.map(a=>`<div class="tl-item"><div class="tl-dot">${a.icon||'!'}</div><div class="tl-card"><div style="display:flex;gap:8px;align-items:center"><strong style="font-size:12px">Suspect activity</strong><time style="margin-left:auto">${a.t}</time></div><p style="margin:6px 0 8px;line-height:1.5">${a.text}</p><button class="mini-btn" data-jump="${a.entity||'arjun'}">Open dossier</button></div></div>`).join('');
     box.querySelectorAll('[data-jump]').forEach(b=> b.addEventListener('click', ()=> showEntity(b.dataset.jump)));
   }
   function renderTabReport(){
+    if (__liveActive()) return; // live per-case report owns #tab-report-body when backend is active
     const body=document.querySelector('#tab-report-body'); if(!body) return;
     const ents=Object.entries(data.entities).map(([k,e])=>({k,name:e.name,role:e.role,risk:riskNum(e),cr:e.criminalId||'-',fir:e.firNumber||'-',cnr:e.cnrNumber||'-'})).sort((a,b)=>b.risk-a.risk);
     const avg=Math.round(ents.reduce((s,e)=>s+e.risk,0)/Math.max(1,ents.length));

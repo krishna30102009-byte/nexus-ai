@@ -91,6 +91,29 @@ function cite(e: any, caseId: string | null): Citation {
   return { entityId: e.id, name: e.name, type: e.type, riskScore: e.risk_score, chainSeq: chainSeqFor(e.id, caseId) };
 }
 
+/** Full-name match first ("mobile y-29"), then first-token match ("pratik"). */
+function nameHit(ents: any[], l: string): any | null {
+  const full = ents.find((e) => l.includes(String(e.name).toLowerCase()));
+  if (full) return full;
+  return ents.find((e) => { const f = String(e.name).split(' ')[0]; return f.length > 2 && l.includes(f.toLowerCase()); }) || null;
+}
+
+function signalsOf(e: any): Array<{ label: string; points: number; detail: string }> {
+  try {
+    const p = JSON.parse(e.data_json || '{}');
+    return (p.riskExplanation && p.riskExplanation.signals) || [];
+  } catch { return []; }
+}
+
+function profileOf(e: any): any {
+  try { return JSON.parse(e.data_json || '{}'); } catch { return {}; }
+}
+
+const REL_WORD: Record<string, string> = {
+  associated_with: 'associated', family_of: 'family', met_with: 'met with', calls: 'calls with',
+  owns: 'owns', co_located: 'seen at', transferred_to: 'paid', transferred_from: 'received from',
+};
+
 export function answer(question: string, ctx: CopilotContext, caseId: string | null): {
   answer: string; language: string; citations: Citation[]; verified: boolean;
   chainChecked: number; verifyMessage: string; followUps: string[]; confidence: number;
@@ -101,6 +124,15 @@ export function answer(question: string, ctx: CopilotContext, caseId: string | n
   const badge = ctx.verified ? '[hash-chain verified]' : '[UNVERIFIED — chain tamper detected]';
   const ents = ctx.entities;
   const byRisk = [...ents].sort((a, b) => b.risk_score - a.risk_score);
+  const names = new Map<string, string>(ents.map((e: any) => [e.id, e.name]));
+  const linksOf = (id: string) => ctx.relationships
+    .filter((r) => r.source_entity_id === id || r.target_entity_id === id)
+    .map((r) => ({
+      other: names.get(r.source_entity_id === id ? r.target_entity_id : r.source_entity_id) || '?',
+      type: r.type, strength: r.strength,
+    }));
+  const linkLine = (lk: { other: string; type: string; strength: number }) =>
+    `${REL_WORD[lk.type] || lk.type} **${lk.other}** (${lk.strength}%)`;
 
   const respond = (text: string, citations: Citation[], followUps: string[], confidence: number) => ({
     answer: `${badge} ${text}`, language: lang, citations, verified: ctx.verified,
@@ -117,8 +149,8 @@ export function answer(question: string, ctx: CopilotContext, caseId: string | n
 
   if (!ents.length) {
     return respond(
-      H ? `${ctx.scope} me abhi koi verified entity nahi hai. Pehle officer se entity add karwao (phone/CNR/Aadhaar ke saath).`
-        : `${ctx.scope} has no verified entities yet. Ask an officer to add entities with phone/CNR/Aadhaar identifiers.`,
+      H ? `${ctx.scope} me abhi koi verified entity nahi hai. Pehle officer se Entities tab se entity add karwao (location/vehicle ke liye auto-reference ban jata hai).`
+        : `${ctx.scope} has no verified entities yet. Ask an officer to add entities from the Entities tab.`,
       [], ['How do I add an entity?', 'What identifiers are required?'], 0.9
     );
   }
@@ -152,15 +184,35 @@ export function answer(question: string, ctx: CopilotContext, caseId: string | n
     );
   }
 
-  // Location
-  if (/(harbor|warehouse|location|godown|hideout|address|kahan)/.test(l)) {
-    const locs = ents.filter((e) => e.type === 'location' || e.lastKnownLocation || (e.data_json || '').toLowerCase().includes('harbor') || (e.data_json || '').toLowerCase().includes('warehouse'));
-    if (locs.length) {
-      const names = locs.slice(0, 3).map((e) => `**${e.name}**`).join(', ');
+  // Locations — named place detail, "X kahan hai?", or full place list
+  if (/(location|godown|hideout|address|kahan|pata|thikana|jagah|sthan|place)/.test(l)) {
+    const places = ents.filter((e) => e.type === 'location');
+    const placeHit = places.find((e) => l.includes(String(e.name).toLowerCase()));
+    if (placeHit) {
+      const prof = profileOf(placeHit);
+      const visitors = ctx.relationships
+        .filter((r) => (r.source_entity_id === placeHit.id || r.target_entity_id === placeHit.id) && r.type === 'co_located')
+        .map((r) => names.get(r.source_entity_id === placeHit.id ? r.target_entity_id : r.source_entity_id))
+        .filter(Boolean);
+      let text = `**${placeHit.name}** (risk ${placeHit.risk_score}%).${prof.background ? ` ${prof.background}` : ''}`;
+      if (visitors.length) text += (H ? ` Yahan dekhe gaye: ` : ` Seen here: `) + visitors.map((v) => `**${v}**`).join(', ') + '.';
+      return respond(text, [cite(placeHit, caseId)], ['Show timeline', 'Who is the kingpin?'], 0.9);
+    }
+    const personHit = ents.filter((e) => e.type === 'person').find((e) => l.includes(String(e.name).toLowerCase()) || l.includes(String(e.name).split(' ')[0].toLowerCase()));
+    if (personHit) {
+      const prof = profileOf(personHit);
+      const spots = ctx.relationships
+        .filter((r) => (r.source_entity_id === personHit.id || r.target_entity_id === personHit.id) && r.type === 'co_located')
+        .map((r) => names.get(r.source_entity_id === personHit.id ? r.target_entity_id : r.source_entity_id))
+        .filter(Boolean);
+      let text = `**${personHit.name}**${prof.lastKnownLocation ? (H ? ` — last location: **${prof.lastKnownLocation}**` : ` — last location: **${prof.lastKnownLocation}**`) : ''}`;
+      if (spots.length) text += (H ? `. In jagahon par dekha gaya: ` : `. Spotted at: `) + spots.map((s) => `**${s}**`).join(', ');
+      return respond(text + '.', [cite(personHit, caseId)], [`Tell me about ${personHit.name}`, 'Show timeline'], 0.9);
+    }
+    if (places.length) {
       return respond(
-        H ? `Location signals: ${names}. Detail dossier me last-known location dekho.` : `Location signals: ${names}. See dossiers for last-known locations.`,
-        locs.slice(0, 3).map((e) => cite(e, caseId)), ['Who was at this location?', 'Show timeline'], 0.8
-      );
+        H ? `Is case ki jagahen: ${places.map((e) => `**${e.name}**`).join(', ')}.` : `Places in this case: ${places.map((e) => `**${e.name}**`).join(', ')}.`,
+        places.slice(0, 5).map((e) => cite(e, caseId)), ['Show timeline', 'Who is the kingpin?'], 0.85);
     }
     return respond(H ? `Koi location signal verified records me nahi.` : `No location signals in verified records.`, [], ['What entities exist?'], 0.7);
   }
@@ -188,11 +240,13 @@ export function answer(question: string, ctx: CopilotContext, caseId: string | n
     }
   }
 
-  // Risk overview
-  if (/(risk|score|threat|khatra)/.test(l)) {
+  // Risk overview (+ top entity's reasons inline) — reason-questions go to the why-branch below
+  if (/(risk|score|threat|khatra)/.test(l) && !/(kyu|kyun|why|reason|wajah|kaaran)/.test(l)) {
     const line = byRisk.slice(0, 5).map((e) => `${e.name} ${e.risk_score}`).join(', ');
+    const topSigs = signalsOf(byRisk[0]);
+    const whyLine = topSigs.length ? (H ? ` Top — **${byRisk[0].name}**: ` : ` Top — **${byRisk[0].name}**: `) + topSigs.map((s) => `+${s.points} ${s.label}`).join(', ') + '.' : '';
     return respond(
-      H ? `Risk scores (verified): ${line}. Har score ke peeche ke signals entity risk view me dekho.` : `Risk scores (verified): ${line}. See each entity's risk view for contributing signals.`,
+      (H ? `Risk scores (verified): ${line}.` : `Risk scores (verified): ${line}.`) + whyLine,
       byRisk.slice(0, 3).map((e) => cite(e, caseId)), ['Who is the kingpin?', 'Why is the top score high?'], 0.85
     );
   }
@@ -207,7 +261,7 @@ export function answer(question: string, ctx: CopilotContext, caseId: string | n
   }
 
   // Case summary
-  if (/(operation|nightfall|case|summary|overview)/.test(l)) {
+  if (/(operation|case|summary|overview|mukadma)/.test(l)) {
     const c = ctx.cases[0];
     const text = c
       ? `**${c.title}** (${c.case_number}) — ${c.status}, priority ${c.priority}. ${ents.length} verified entities, ${ctx.relationships.length} links. Central: **${ctx.centralName || byRisk[0]?.name || '—'}**.`
@@ -215,12 +269,112 @@ export function answer(question: string, ctx: CopilotContext, caseId: string | n
     return respond(text, byRisk.slice(0, 2).map((e) => cite(e, caseId)), ['Who is the kingpin?', 'Show timeline'], 0.85);
   }
 
+  // Connection between two named entities ("pratik aur durgesh ka connection?")
+  if (/(connection|relation|link|rishta|sambandh|taalluk)/.test(l) || /(aur|and|vs)\b/.test(l)) {
+    const found = ents.filter((e) => l.includes(String(e.name).toLowerCase()) || l.includes(String(e.name).split(' ')[0].toLowerCase()));
+    if (found.length >= 2) {
+      const [a, b] = found;
+      const direct = ctx.relationships.find((r) =>
+        (r.source_entity_id === a.id && r.target_entity_id === b.id) ||
+        (r.source_entity_id === b.id && r.target_entity_id === a.id));
+      if (direct) {
+        const text = H
+          ? `**${a.name}** aur **${b.name}** me seedha link hai — ${REL_WORD[direct.type] || direct.type} (${direct.strength}%).`
+          : `Direct link: **${a.name}** ${REL_WORD[direct.type] || direct.type} **${b.name}** (${direct.strength}%).`;
+        return respond(text, [cite(a, caseId), cite(b, caseId)], [`Tell me about ${a.name}`, 'Who is the kingpin?'], 0.9);
+      }
+      return respond(
+        H ? `**${a.name}** aur **${b.name}** me koi seedha verified link nahi — dono ${ctx.scope} me hain.` : `No direct verified link between **${a.name}** and **${b.name}** — both are in ${ctx.scope}.`,
+        [cite(a, caseId), cite(b, caseId)], ['Who is the kingpin?', 'Show network graph'], 0.85);
+    }
+  }
+
+  // Why / reason behind a risk score ("lava ka risk kyu hai?")
+  if (/(kyu|kyun|why|reason|wajah|kaaran|kaise|kaise bana|explain)/.test(l)) {
+    const target = nameHit(ents, l) || byRisk[0];
+    const sigs = signalsOf(target);
+    if (sigs.length) {
+      const lines = sigs.map((s) => `+${s.points} ${s.label} — ${s.detail}`).join('; ');
+      const text = H
+        ? `**${target.name}** ka risk **${target.risk_score}%** isliye: ${lines}.`
+        : `**${target.name}** scores **${target.risk_score}%** because: ${lines}.`;
+      return respond(text, [cite(target, caseId)], [`Tell me about ${target.name}`, 'Risk scores?'], 0.9);
+    }
+    return respond(
+      H ? `**${target.name}** ka risk **${target.risk_score}%** base monitoring score hai — abhi koi strong signal nahi.` : `**${target.name}** at **${target.risk_score}%** is a base monitoring score — no strong signals yet.`,
+      [cite(target, caseId)], ['Risk scores?'], 0.8);
+  }
+
+  // Counts ("kitne persons hain?", "how many mobiles?")
+  if (/(kitne|kitni|how many|count|total|number of)/.test(l)) {
+    const t = /(mobile|phone|device|handset|sim)/.test(l) ? 'device'
+      : /(gaadi|vehicle|bike|car|bullet|activa|platina|splendor)/.test(l) ? 'vehicle'
+      : /(vyakti|log|person|suspect|aaropi|accused)/.test(l) ? 'person'
+      : /(jagah|place|location|thikana)/.test(l) ? 'location' : null;
+    if (t) {
+      const list = ents.filter((e) => e.type === t);
+      const text = H
+        ? `${ctx.scope} me **${list.length} ${t}s** hain: ${list.map((e) => e.name).join(', ') || '—'}.`
+        : `${ctx.scope} has **${list.length} ${t}s**: ${list.map((e) => e.name).join(', ') || '—'}.`;
+      return respond(text, list.slice(0, 5).map((e) => cite(e, caseId)), ['Who is the kingpin?', 'Risk scores?'], 0.9);
+    }
+    const byType = ['person', 'device', 'vehicle', 'location'].map((t) => `${ents.filter((e) => e.type === t).length} ${t}s`).join(', ');
+    return respond(H ? `${ctx.scope} me kul **${ents.length}** entities: ${byType}.` : `${ctx.scope}: **${ents.length}** entities — ${byType}.`,
+      byRisk.slice(0, 2).map((e) => cite(e, caseId)), ['Who is the kingpin?'], 0.9);
+  }
+
+  // Devices / mobiles ("saare mobiles dikhao", "lava kis ka hai?", "y-29 ke baare me")
+  if (/(mobile|phone|device|handset|sim|imei)/.test(l)) {
+    const devs = ents.filter((e) => e.type === 'device' || e.type === 'phone');
+    const exact = devs.find((e) => l.includes(String(e.name).toLowerCase()));
+    if (exact) {
+      const ownerRels = ctx.relationships.filter((r) => (r.source_entity_id === exact.id || r.target_entity_id === exact.id) && r.type === 'owns');
+      const ownerNames = ownerRels.map((r) => names.get(r.source_entity_id === exact.id ? r.target_entity_id : r.source_entity_id)).filter(Boolean);
+      const text = H
+        ? `**${exact.name}** (risk ${exact.risk_score}%)${ownerNames.length ? ` — **${ownerNames.join(', ')}** ka hai` : ''}. ${profileOf(exact).background || ''}`.trim()
+        : `**${exact.name}** (risk ${exact.risk_score}%)${ownerNames.length ? ` — owned by **${ownerNames.join(', ')}**` : ''}. ${profileOf(exact).background || ''}`.trim();
+      return respond(text, [cite(exact, caseId)], ['Show all mobiles', 'Who is the kingpin?'], 0.9);
+    }
+    if (devs.length) {
+      const text = H
+        ? `Is case ke mobiles: ${devs.map((e) => `**${e.name}** (${e.risk_score}%)`).join(', ')}.`
+        : `Mobiles in this case: ${devs.map((e) => `**${e.name}** (${e.risk_score}%)`).join(', ')}.`;
+      return respond(text, devs.slice(0, 6).map((e) => cite(e, caseId)), ['Who is the kingpin?', 'Risk scores?'], 0.85);
+    }
+  }
+
+  // Vehicles ("gaadiyan kaun si hain?")
+  if (/(vehicle|gaadi|gaadiyan|bike|car|bullet|activa|platina|splendor|truck)/.test(l)) {
+    const vehs = ents.filter((e) => e.type === 'vehicle');
+    if (vehs.length) {
+      const text = H
+        ? `Is case ki gaadiyan: ${vehs.map((e) => `**${e.name}** (${e.risk_score}%)`).join(', ')}.`
+        : `Vehicles in this case: ${vehs.map((e) => `**${e.name}** (${e.risk_score}%)`).join(', ')}.`;
+      return respond(text, vehs.slice(0, 6).map((e) => cite(e, caseId)), ['Who is the kingpin?'], 0.85);
+    }
+    return respond(H ? `Is case me koi verified vehicle nahi hai.` : `No verified vehicles in this case.`, [], ['What entities exist?'], 0.75);
+  }
+
+  // Persons ("saare suspects kaun hain?", "pratik ke baare me")
+  if (/(vyakti|suspect|aaropi|accused|persons|people|members)/.test(l)) {
+    const ps = ents.filter((e) => e.type === 'person');
+    if (ps.length) {
+      const text = H
+        ? `Is case ke persons: ${ps.map((e) => `**${e.name}** (${e.risk_score}%)`).join(', ')}.`
+        : `Persons in this case: ${ps.map((e) => `**${e.name}** (${e.risk_score}%)`).join(', ')}.`;
+      return respond(text, ps.slice(0, 6).map((e) => cite(e, caseId)), ['Who is the kingpin?', 'Risk scores?'], 0.85);
+    }
+  }
+
   // Direct entity name hit
-  const hit = ents.find((e) => l.includes(e.name.toLowerCase().split(' ')[0]) && e.name.split(' ')[0].length > 2);
+  const hit = nameHit(ents, l);
   if (hit) {
-    let prof: any = {};
-    try { prof = JSON.parse(hit.data_json || '{}'); } catch { prof = {}; }
-    const text = `**${hit.name}** (${hit.type}) — risk **${hit.risk_score}**. ${prof.background || ''} ${prof.lastKnownLocation ? `Last seen: ${prof.lastKnownLocation}.` : ''}`;
+    const prof = profileOf(hit);
+    const lks = linksOf(hit.id).slice(0, 5);
+    const sigs = signalsOf(hit);
+    let text = `**${hit.name}** (${hit.type}) — risk **${hit.risk_score}**. ${(prof.background || '').trim()}${prof.lastKnownLocation ? ` Last seen: ${prof.lastKnownLocation}.` : ''}`;
+    if (lks.length) text += (H ? ` Links: ` : ` Links: `) + lks.map(linkLine).join('; ') + '.';
+    if (sigs.length) text += (H ? ` Risk kyu: ` : ` Why: `) + sigs.map((s) => `+${s.points} ${s.label}`).join(', ') + '.';
     return respond(text.trim(), [cite(hit, caseId)], ['Who is the kingpin?', 'Show money trail'], 0.9);
   }
 

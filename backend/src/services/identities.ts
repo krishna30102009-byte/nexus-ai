@@ -51,10 +51,13 @@ export function resolveIdentities(input: IdentifierInput): ResolvedIdentity[] {
   return out;
 }
 
-/** Returns the existing entity holding this identifier, if any */
+/** Returns the existing entity holding this identifier, if any.
+ * FIR is a shared case record (one FIR names several accused), so it is
+ * deliberately NOT a dedupe key — only phone/CNR/Aadhaar/criminal block. */
 export function findDuplicate(resolved: ResolvedIdentity[]): { entityId: string; idType: string } | null {
   const db = getDb();
   for (const r of resolved) {
+    if (r.idType === 'fir') continue;
     const hit = db.prepare(`SELECT entity_id FROM entity_identities WHERE id_type = ? AND id_value_hash = ?`).get(r.idType, r.valueHash) as { entity_id: string } | undefined;
     if (hit) return { entityId: hit.entity_id, idType: r.idType };
   }
@@ -65,8 +68,15 @@ export function attachIdentities(entityId: string, resolved: ResolvedIdentity[])
   const db = getDb();
   const now = new Date().toISOString();
   for (const r of resolved) {
-    db.prepare(`INSERT INTO entity_identities (id, entity_id, id_type, id_value, id_value_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(randomUUID(), entityId, r.idType, r.storeValue, r.valueHash, now);
+    try {
+      db.prepare(`INSERT INTO entity_identities (id, entity_id, id_type, id_value, id_value_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), entityId, r.idType, r.storeValue, r.valueHash, now);
+    } catch (e: any) {
+      // A shared FIR already recorded on another accused: keep the entity's
+      // own FIR reference in source_ids_json, skip the duplicate identity row.
+      if (r.idType === 'fir' && String(e?.message || '').includes('UNIQUE')) continue;
+      throw e;
+    }
   }
 }
 
